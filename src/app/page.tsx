@@ -1,122 +1,66 @@
 import Link from "next/link";
 import { redirect } from "next/navigation";
 import { AppShell } from "@/components/app-shell";
-import { SeedButton } from "@/components/seed-button";
 import { CATEGORY_LABEL } from "@/lib/categories";
-import { addMonths, currentMonthParts, formatTicketDate, monthLabel, monthRangeIso } from "@/lib/dates";
-import { getMembership } from "@/lib/household";
+import { addMonths, currentMonthParts, formatTicketDate, monthLabel } from "@/lib/dates";
+import { apiServer, getMe } from "@/lib/api";
 import { formatCents } from "@/lib/money";
-import type { Category, TicketRow } from "@/lib/types";
+import type { Category } from "@/lib/types";
+
+type Summary = {
+  year: number;
+  month: number;
+  total_cents: number;
+  prev_total_cents: number;
+  tickets: Array<{
+    id: string;
+    store: string;
+    purchased_at: string;
+    total_cents: number;
+    mismatch: boolean;
+  }>;
+  by_store: Array<{ store: string; total_cents: number }>;
+  repeating: Array<{
+    id: string;
+    name: string;
+    category: Category;
+    count: number;
+    spent: number;
+  }>;
+};
 
 export default async function HomePage({
   searchParams,
 }: {
   searchParams: Promise<{ y?: string; m?: string }>;
 }) {
-  const { user, household, supabase } = await getMembership();
-  if (!user) redirect("/login");
-  if (!household) redirect("/hucha");
+  const me = await getMe();
+  if (!me.user) redirect("/login");
+  if (!me.household) redirect("/hucha");
 
   const params = await searchParams;
   const now = currentMonthParts();
   const year = Number(params.y) || now.year;
   const month = Number(params.m) || now.month;
-  const { start, end } = monthRangeIso(year, month);
   const prev = addMonths(year, month, -1);
-  const prevRange = monthRangeIso(prev.year, prev.month);
   const next = addMonths(year, month, 1);
 
-  const [{ data: tickets }, { data: prevTickets }] = await Promise.all([
-    supabase
-      .from("tickets")
-      .select(
-        "id, store, purchased_at, total_cents, mismatch, created_at, invoice_number",
-      )
-      .eq("household_id", household.id)
-      .gte("purchased_at", start)
-      .lt("purchased_at", end)
-      .order("purchased_at", { ascending: false }),
-    supabase
-      .from("tickets")
-      .select("total_cents")
-      .eq("household_id", household.id)
-      .gte("purchased_at", prevRange.start)
-      .lt("purchased_at", prevRange.end),
-  ]);
-
-  const monthTickets = (tickets ?? []) as TicketRow[];
-  const total = monthTickets.reduce((sum, ticket) => sum + ticket.total_cents, 0);
-  const prevTotal = (prevTickets ?? []).reduce(
-    (sum, ticket) => sum + (ticket.total_cents as number),
-    0,
-  );
+  const summary = await apiServer<Summary>(`/summary?year=${year}&month=${month}`);
+  const total = summary.total_cents;
+  const prevTotal = summary.prev_total_cents;
   const delta = total - prevTotal;
-
-  const byStore = new Map<string, number>();
-  for (const ticket of monthTickets) {
-    byStore.set(ticket.store, (byStore.get(ticket.store) ?? 0) + ticket.total_cents);
-  }
-
-  const ticketIds = monthTickets.map((ticket) => ticket.id);
-  let repeating: Array<{
-    id: string;
-    name: string;
-    category: Category;
-    count: number;
-    spent: number;
-  }> = [];
-
-  if (ticketIds.length > 0) {
-    const { data: lines } = await supabase
-      .from("ticket_lines")
-      .select("product_id, amount_cents, products(id, canonical_name, category)")
-      .in("ticket_id", ticketIds);
-
-    const grouped = new Map<
-      string,
-      { name: string; category: Category; count: number; spent: number }
-    >();
-    for (const row of lines ?? []) {
-      const productRel = row.products as
-        | { id: string; canonical_name: string; category: Category }
-        | { id: string; canonical_name: string; category: Category }[]
-        | null;
-      const product = Array.isArray(productRel) ? productRel[0] : productRel;
-      if (!product) continue;
-      const current = grouped.get(product.id) ?? {
-        name: product.canonical_name,
-        category: product.category,
-        count: 0,
-        spent: 0,
-      };
-      current.count += 1;
-      current.spent += Number(row.amount_cents);
-      grouped.set(product.id, current);
-    }
-    repeating = [...grouped.entries()]
-      .map(([id, value]) => ({ id, ...value }))
-      .filter((item) => item.count >= 2)
-      .sort((a, b) => b.spent - a.spent)
-      .slice(0, 6);
-  }
-
+  const monthTickets = summary.tickets ?? [];
   const canGoNext = year < now.year || (year === now.year && month < now.month);
 
   return (
-    <AppShell inviteCode={household.invite_code}>
+    <AppShell inviteCode={me.household.invite_code}>
       <div className="flex items-center justify-between">
-        <Link
-          href={`/?y=${prev.year}&m=${prev.month}`}
-          className="text-sm text-muted"
-        >
+        <Link href={`/?y=${prev.year}&m=${prev.month}`} className="text-sm text-muted">
           Anterior
         </Link>
         <h1 className="text-sm font-medium">{monthLabel(year, month)}</h1>
         {canGoNext ? (
-          <Link
-            href={`/?y=${next.year}&m=${next.month}`}
-            className="text-sm text-muted"
-          >
+          <Link href={`/?y=${next.year}&m=${next.month}`} className="text-sm text-muted">
             Siguiente
           </Link>
         ) : (
@@ -142,36 +86,30 @@ export default async function HomePage({
         />
       </form>
 
-      {monthTickets.length === 0 ? (
-        <div className="mt-8">
-          <SeedButton />
-        </div>
-      ) : null}
-
-      {byStore.size > 0 ? (
+      {summary.by_store?.length ? (
         <section className="mt-8">
           <h2 className="text-sm font-medium">Por tienda</h2>
           <ul className="mt-3 divide-y divide-line rounded-2xl border border-line bg-card">
-            {[...byStore.entries()]
-              .sort((a, b) => b[1] - a[1])
-              .map(([store, amount]) => (
+            {[...summary.by_store]
+              .sort((a, b) => b.total_cents - a.total_cents)
+              .map((row) => (
                 <li
-                  key={store}
+                  key={row.store}
                   className="flex items-center justify-between px-4 py-3 text-sm"
                 >
-                  <span>{store}</span>
-                  <span className="font-medium">{formatCents(amount)}</span>
+                  <span>{row.store}</span>
+                  <span className="font-medium">{formatCents(row.total_cents)}</span>
                 </li>
               ))}
           </ul>
         </section>
       ) : null}
 
-      {repeating.length > 0 ? (
+      {summary.repeating?.length ? (
         <section className="mt-8">
           <h2 className="text-sm font-medium">Se repite</h2>
           <ul className="mt-3 flex flex-col gap-2">
-            {repeating.map((item) => (
+            {summary.repeating.map((item) => (
               <li key={item.id}>
                 <Link
                   href={`/producto/${item.id}`}

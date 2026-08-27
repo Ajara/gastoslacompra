@@ -1,0 +1,25 @@
+services:
+  api:
+    build:
+      context: ./backend
+    ports:
+      - "8081:8080"
+    env_file:
+      - .env.local
+    environment:
+      DATA_DIR: /data
+      ADDR: ":8080"
+    volumes:
+      - ./data:/data
+    restart: unless-stopped
+
+  web:
+    build:
+      context: .
+    ports:
+      - "3001:3000"
+    environment:
+      API_INTERNAL_URL: http://api:8080
+    depends_on:
+      - api
+    restart: unless-stopped

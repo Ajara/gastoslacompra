@@ -34,6 +34,11 @@ yarn-error.log*
 .env*
 !.env.example
 
+# sqlite + fotos del API
+/data/
+/backend/data/
+/backend/bin/
+
 # vercel
 .vercel
 

@@ -2,7 +2,6 @@
 
 import { useMemo, useState } from "react";
 import { useRouter } from "next/navigation";
-import { saveTicketAction } from "@/lib/actions";
 import {
   formatCents,
   formatEuroInput,
@@ -13,7 +12,6 @@ import {
 import { fromDatetimeLocalValue, toDatetimeLocalValue } from "@/lib/dates";
 import type { DraftLine, ExtractedTicket, TicketDraft } from "@/lib/types";
 import { eurosToCents } from "@/lib/money";
-import { createClient } from "@/lib/supabase/client";
 
 function newLine(): DraftLine {
   return {
@@ -65,7 +63,7 @@ async function compressImage(file: File): Promise<Blob> {
   });
 }
 
-export function ScanFlow({ householdId }: { householdId: string }) {
+export function ScanFlow() {
   const router = useRouter();
   const [step, setStep] = useState<"idle" | "reading" | "review">("idle");
   const [error, setError] = useState<string | null>(null);
@@ -93,7 +91,11 @@ export function ScanFlow({ householdId }: { householdId: string }) {
 
       const body = new FormData();
       body.append("file", compressed, "ticket.jpg");
-      const response = await fetch("/api/extract", { method: "POST", body });
+      const response = await fetch("/backend/extract", {
+        method: "POST",
+        body,
+        credentials: "include",
+      });
       const payload = (await response.json()) as ExtractedTicket & {
         error?: string;
       };
@@ -135,42 +137,40 @@ export function ScanFlow({ householdId }: { householdId: string }) {
     setError(null);
     try {
       const ticketId = crypto.randomUUID();
-      let photoPath: string | null = null;
-      if (photo) {
-        const supabase = createClient();
-        photoPath = `${householdId}/${ticketId}.jpg`;
-        const { error: uploadError } = await supabase.storage
-          .from("tickets")
-          .upload(photoPath, photo, {
-            contentType: "image/jpeg",
-            upsert: true,
-          });
-        if (uploadError) throw uploadError;
-      }
-      const result = await saveTicketAction({
-        ticket: {
+      const form = new FormData();
+      form.append(
+        "payload",
+        JSON.stringify({
+          ticketId,
           store: draft.store,
           purchasedAt: draft.purchasedAt,
-          total: draft.totalCents / 100,
+          totalCents: draft.totalCents,
           paymentMethod: draft.paymentMethod || null,
           invoiceNumber: draft.invoiceNumber || null,
-          lines: [],
-        },
-        ticketId,
-        photoPath,
-        totalCents: draft.totalCents,
-        lines: draft.lines
-          .filter((line) => line.name.trim())
-          .map((line) => ({
-            name: line.name.trim(),
-            quantity: line.quantity,
-            unitCents: line.unitCents,
-            amountCents: line.amountCents,
-            vatRate: line.vatRate,
-            note: line.note,
-          })),
+          lines: draft.lines
+            .filter((line) => line.name.trim())
+            .map((line) => ({
+              name: line.name.trim(),
+              quantity: line.quantity,
+              unitCents: line.unitCents,
+              amountCents: line.amountCents,
+              vatRate: line.vatRate,
+              note: line.note,
+            })),
+        }),
+      );
+      if (photo) {
+        form.append("photo", photo, "ticket.jpg");
+      }
+      const response = await fetch("/backend/tickets", {
+        method: "POST",
+        body: form,
+        credentials: "include",
       });
-      if (result.error || !result.id) throw new Error(result.error || "Error al guardar");
+      const result = (await response.json()) as { id?: string; error?: string };
+      if (!response.ok || !result.id) {
+        throw new Error(result.error || "Error al guardar");
+      }
       router.push(`/ticket/${result.id}`);
       router.refresh();
     } catch (err) {

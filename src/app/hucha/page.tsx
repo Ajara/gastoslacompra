@@ -1,10 +1,10 @@
 import { redirect } from "next/navigation";
 import { HuchaForm } from "@/components/hucha-form";
-import { getMembership } from "@/lib/household";
 import { signOutAction } from "@/lib/actions";
+import { getMe } from "@/lib/api";
 
 export default async function HuchaPage() {
-  const { user, household } = await getMembership();
+  const { user, household } = await getMe();
   if (!user) redirect("/login");
   if (household) redirect("/");
 

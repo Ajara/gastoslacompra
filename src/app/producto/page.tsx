@@ -2,9 +2,19 @@ import Link from "next/link";
 import { redirect } from "next/navigation";
 import { AppShell } from "@/components/app-shell";
 import { CATEGORY_LABEL } from "@/lib/categories";
-import { getMembership } from "@/lib/household";
+import { apiServer, getMe } from "@/lib/api";
 import { formatCents } from "@/lib/money";
-import type { Category, ProductRow } from "@/lib/types";
+import type { Category } from "@/lib/types";
+
+type ProductList = {
+  products: Array<{
+    id: string;
+    canonical_name: string;
+    category: Category;
+    count: number;
+    spent_cents: number;
+  }>;
+};
 
 export default async function ProductosPage({
   searchParams,
@@ -12,40 +22,15 @@ export default async function ProductosPage({
   searchParams: Promise<{ q?: string }>;
 }) {
   const { q = "" } = await searchParams;
-  const { user, household, supabase } = await getMembership();
-  if (!user) redirect("/login");
-  if (!household) redirect("/hucha");
+  const me = await getMe();
+  if (!me.user) redirect("/login");
+  if (!me.household) redirect("/hucha");
 
-  let query = supabase
-    .from("products")
-    .select("*")
-    .eq("household_id", household.id)
-    .order("canonical_name");
-
-  if (q.trim()) {
-    query = query.ilike("canonical_name", `%${q.trim()}%`);
-  }
-
-  const { data: products } = await query.limit(80);
-  const ids = (products ?? []).map((product) => product.id as string);
-
-  const spentByProduct = new Map<string, { count: number; spent: number }>();
-  if (ids.length > 0) {
-    const { data: lines } = await supabase
-      .from("ticket_lines")
-      .select("product_id, amount_cents")
-      .in("product_id", ids);
-    for (const line of lines ?? []) {
-      const key = line.product_id as string;
-      const current = spentByProduct.get(key) ?? { count: 0, spent: 0 };
-      current.count += 1;
-      current.spent += line.amount_cents as number;
-      spentByProduct.set(key, current);
-    }
-  }
+  const qs = q.trim() ? `?q=${encodeURIComponent(q.trim())}` : "";
+  const { products } = await apiServer<ProductList>(`/products${qs}`);
 
   return (
-    <AppShell inviteCode={household.invite_code}>
+    <AppShell inviteCode={me.household.invite_code}>
       <Link href="/" className="text-sm text-muted">
         Inicio
       </Link>
@@ -59,32 +44,29 @@ export default async function ProductosPage({
         />
       </form>
       <ul className="mt-4 flex flex-col gap-2">
-        {(products as ProductRow[] | null)?.map((product) => {
-          const stats = spentByProduct.get(product.id);
-          return (
-            <li key={product.id}>
-              <Link
-                href={`/producto/${product.id}`}
-                className="flex items-center justify-between rounded-2xl border border-line bg-card px-4 py-3"
-              >
-                <span>
-                  <span className="block text-sm font-medium">
-                    {product.canonical_name}
-                  </span>
-                  <span className="text-xs text-muted">
-                    {CATEGORY_LABEL[product.category as Category]}
-                    {stats ? ` · ${stats.count} veces` : ""}
-                  </span>
+        {products.map((product) => (
+          <li key={product.id}>
+            <Link
+              href={`/producto/${product.id}`}
+              className="flex items-center justify-between rounded-2xl border border-line bg-card px-4 py-3"
+            >
+              <span>
+                <span className="block text-sm font-medium">
+                  {product.canonical_name}
                 </span>
-                <span className="text-sm">
-                  {stats ? formatCents(stats.spent) : "—"}
+                <span className="text-xs text-muted">
+                  {CATEGORY_LABEL[product.category]}
+                  {product.count ? ` · ${product.count} veces` : ""}
                 </span>
-              </Link>
-            </li>
-          );
-        })}
+              </span>
+              <span className="text-sm">
+                {product.count ? formatCents(product.spent_cents) : "—"}
+              </span>
+            </Link>
+          </li>
+        ))}
       </ul>
-      {products?.length === 0 ? (
+      {products.length === 0 ? (
         <p className="mt-8 text-sm text-muted">No hay productos con ese nombre.</p>
       ) : null}
     </AppShell>

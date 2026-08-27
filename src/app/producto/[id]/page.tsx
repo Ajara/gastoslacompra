@@ -4,9 +4,9 @@ import { AppShell } from "@/components/app-shell";
 import { CategoryPicker } from "@/components/category-picker";
 import { CATEGORY_LABEL } from "@/lib/categories";
 import { formatTicketDate } from "@/lib/dates";
-import { getMembership } from "@/lib/household";
+import { apiServer, getMe } from "@/lib/api";
 import { formatCents } from "@/lib/money";
-import type { Category, ProductRow, TicketLineRow } from "@/lib/types";
+import type { Category } from "@/lib/types";
 
 function PriceChart({
   points,
@@ -53,54 +53,46 @@ function PriceChart({
   );
 }
 
+type ProductDetail = {
+  product: { id: string; canonical_name: string; category: Category };
+  history: Array<{
+    id: string;
+    quantity: number;
+    unit_cents: number;
+    amount_cents: number;
+    ticket_id: string;
+    store: string;
+    purchased_at: string;
+  }>;
+};
+
 export default async function ProductPage({
   params,
 }: {
   params: Promise<{ id: string }>;
 }) {
   const { id } = await params;
-  const { user, household, supabase } = await getMembership();
-  if (!user) redirect("/login");
-  if (!household) redirect("/hucha");
+  const me = await getMe();
+  if (!me.user) redirect("/login");
+  if (!me.household) redirect("/hucha");
 
-  const { data: product } = await supabase
-    .from("products")
-    .select("*")
-    .eq("id", id)
-    .eq("household_id", household.id)
-    .maybeSingle();
+  let payload: ProductDetail;
+  try {
+    payload = await apiServer(`/products/${id}`);
+  } catch {
+    notFound();
+  }
 
-  if (!product) notFound();
-  const row = product as ProductRow;
-
-  const { data: lines } = await supabase
-    .from("ticket_lines")
-    .select("*, tickets(id, store, purchased_at)")
-    .eq("product_id", id)
-    .eq("household_id", household.id);
-
-  type LineWithTicket = TicketLineRow & {
-    tickets: { id: string; store: string; purchased_at: string } | null;
-  };
-
-  const history = ((lines ?? []) as LineWithTicket[])
-    .filter((line) => line.tickets)
-    .sort(
-      (a, b) =>
-        new Date(a.tickets!.purchased_at).getTime() -
-        new Date(b.tickets!.purchased_at).getTime(),
-    );
-
+  const row = payload.product;
+  const history = payload.history ?? [];
   const spent = history.reduce((sum, line) => sum + line.amount_cents, 0);
   const last = history.at(-1);
   const first = history.at(0);
   const priceDelta =
-    last && first && history.length > 1
-      ? last.unit_cents - first.unit_cents
-      : 0;
+    last && first && history.length > 1 ? last.unit_cents - first.unit_cents : 0;
 
   return (
-    <AppShell inviteCode={household.invite_code}>
+    <AppShell inviteCode={me.household.invite_code}>
       <Link href="/" className="text-sm text-muted">
         Inicio
       </Link>
@@ -132,7 +124,7 @@ export default async function ProductPage({
 
       <PriceChart
         points={history.map((line) => ({
-          date: line.tickets!.purchased_at,
+          date: line.purchased_at,
           unitCents: line.unit_cents,
         }))}
       />
@@ -142,13 +134,13 @@ export default async function ProductPage({
         {[...history].reverse().map((line) => (
           <li key={line.id}>
             <Link
-              href={`/ticket/${line.tickets!.id}`}
+              href={`/ticket/${line.ticket_id}`}
               className="flex items-center justify-between px-4 py-3"
             >
               <span>
-                <span className="block text-sm">{line.tickets!.store}</span>
+                <span className="block text-sm">{line.store}</span>
                 <span className="text-xs text-muted">
-                  {formatTicketDate(line.tickets!.purchased_at)} · {line.quantity} ×{" "}
+                  {formatTicketDate(line.purchased_at)} · {line.quantity} ×{" "}
                   {formatCents(line.unit_cents)}
                 </span>
               </span>

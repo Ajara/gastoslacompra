@@ -2,7 +2,7 @@ import Link from "next/link";
 import { notFound, redirect } from "next/navigation";
 import { AppShell } from "@/components/app-shell";
 import { formatTicketDate } from "@/lib/dates";
-import { getMembership } from "@/lib/household";
+import { apiServer, getMe } from "@/lib/api";
 import { formatCents } from "@/lib/money";
 import type { TicketLineRow, TicketRow } from "@/lib/types";
 
@@ -12,36 +12,22 @@ export default async function TicketPage({
   params: Promise<{ id: string }>;
 }) {
   const { id } = await params;
-  const { user, household, supabase } = await getMembership();
-  if (!user) redirect("/login");
-  if (!household) redirect("/hucha");
+  const me = await getMe();
+  if (!me.user) redirect("/login");
+  if (!me.household) redirect("/hucha");
 
-  const { data: ticket } = await supabase
-    .from("tickets")
-    .select("*")
-    .eq("id", id)
-    .eq("household_id", household.id)
-    .maybeSingle();
-
-  if (!ticket) notFound();
-  const row = ticket as TicketRow;
-
-  const { data: lines } = await supabase
-    .from("ticket_lines")
-    .select("*")
-    .eq("ticket_id", id)
-    .order("created_at", { ascending: true });
-
-  let photoUrl: string | null = null;
-  if (row.photo_path) {
-    const { data } = await supabase.storage
-      .from("tickets")
-      .createSignedUrl(row.photo_path, 3600);
-    photoUrl = data?.signedUrl ?? null;
+  let payload: { ticket: TicketRow & { photo_url?: string | null }; lines: TicketLineRow[] };
+  try {
+    payload = await apiServer(`/tickets/${id}`);
+  } catch {
+    notFound();
   }
 
+  const row = payload.ticket;
+  const photoUrl = row.photo_url ? `/backend${row.photo_url}` : null;
+
   return (
-    <AppShell inviteCode={household.invite_code}>
+    <AppShell inviteCode={me.household.invite_code}>
       <Link href="/" className="text-sm text-muted">
         Inicio
       </Link>
@@ -71,7 +57,7 @@ export default async function TicketPage({
 
       <h2 className="mt-8 text-sm font-medium">Líneas</h2>
       <ul className="mt-3 divide-y divide-line rounded-2xl border border-line bg-card">
-        {(lines as TicketLineRow[] | null)?.map((line) => (
+        {payload.lines.map((line) => (
           <li key={line.id}>
             {line.product_id ? (
               <Link
