@@ -188,17 +188,35 @@ export function ScanFlow() {
             Foto al salir de la tienda. Revisa las líneas antes de guardar.
           </p>
         </div>
-        <label className="flex min-h-56 cursor-pointer flex-col items-center justify-center gap-3 rounded-2xl border border-dashed border-ink/20 bg-card px-6 text-center">
-          <span className="text-sm font-medium text-scan">Hacer foto</span>
-          <span className="text-sm text-muted">o elegirla de la galería</span>
-          <input
-            type="file"
-            accept="image/*"
-            capture="environment"
-            className="sr-only"
-            onChange={(event) => onFile(event.target.files?.[0])}
-          />
-        </label>
+        <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
+          <label className="flex min-h-36 cursor-pointer flex-col items-center justify-center gap-2 rounded-2xl border border-dashed border-ink/20 bg-card px-6 text-center">
+            <span className="text-sm font-medium text-scan">Hacer foto</span>
+            <span className="text-sm text-muted">Cámara trasera</span>
+            <input
+              type="file"
+              accept="image/*"
+              capture="environment"
+              className="sr-only"
+              onChange={(event) => {
+                onFile(event.target.files?.[0]);
+                event.target.value = "";
+              }}
+            />
+          </label>
+          <label className="flex min-h-36 cursor-pointer flex-col items-center justify-center gap-2 rounded-2xl border border-dashed border-ink/20 bg-card px-6 text-center">
+            <span className="text-sm font-medium">Galería</span>
+            <span className="text-sm text-muted">Elegir una imagen</span>
+            <input
+              type="file"
+              accept="image/*"
+              className="sr-only"
+              onChange={(event) => {
+                onFile(event.target.files?.[0]);
+                event.target.value = "";
+              }}
+            />
+          </label>
+        </div>
         {error ? <p className="text-sm text-scan">{error}</p> : null}
       </div>
     );
