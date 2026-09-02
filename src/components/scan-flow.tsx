@@ -5,8 +5,10 @@ import { useRouter } from "next/navigation";
 import {
   formatCents,
   formatEuroInput,
+  formatQuantity,
   isMismatch,
   linesSumCents,
+  parseDecimal,
   parseEuroInput,
 } from "@/lib/money";
 import { fromDatetimeLocalValue, toDatetimeLocalValue } from "@/lib/dates";
@@ -56,8 +58,15 @@ function toDraft(extracted: ExtractedTicket): TicketDraft {
 }
 
 async function compressImage(file: File, mode: ExtractModel = "fast"): Promise<Blob> {
+  if (
+    mode === "accurate" &&
+    (file.type === "image/jpeg" || file.type === "image/png" || file.type === "image/webp") &&
+    file.size <= 7_500_000
+  ) {
+    return file;
+  }
   const bitmap = await createImageBitmap(file);
-  const max = mode === "accurate" ? 2400 : 1600;
+  const max = mode === "accurate" ? 4096 : 1600;
   const scale = Math.min(1, max / Math.max(bitmap.width, bitmap.height));
   const canvas = document.createElement("canvas");
   canvas.width = Math.max(1, Math.round(bitmap.width * scale));
@@ -69,7 +78,7 @@ async function compressImage(file: File, mode: ExtractModel = "fast"): Promise<B
     canvas.toBlob(
       (blob) => resolve(blob || file),
       "image/jpeg",
-      mode === "accurate" ? 0.92 : 0.82,
+      mode === "accurate" ? 0.95 : 0.82,
     );
   });
 }
@@ -274,7 +283,7 @@ export function ScanFlow() {
         <p className="text-lg font-medium">Leyendo el ticket…</p>
         <p className="text-sm text-muted">
           {model === "accurate"
-            ? "Modelo preciso: tarda un poco más."
+            ? "GPT-5.6 Sol: tarda un poco más."
             : "Suele tardar unos segundos."}
         </p>
       </div>
@@ -340,12 +349,11 @@ export function ScanFlow() {
         </label>
         <label className="flex flex-col gap-1 text-sm">
           <span className="text-muted">Total</span>
-          <input
-            inputMode="decimal"
-            value={formatEuroInput(draft.totalCents)}
-            onChange={(e) =>
-              setDraft({ ...draft, totalCents: parseEuroInput(e.target.value) })
-            }
+          <DraftDecimalInput
+            value={draft.totalCents}
+            format={formatEuroInput}
+            parse={parseEuroInput}
+            onCommit={(totalCents) => setDraft({ ...draft, totalCents })}
             className="h-11 rounded-xl border border-line bg-card px-3 outline-none focus:border-accent"
           />
         </label>
@@ -381,36 +389,31 @@ export function ScanFlow() {
             <div className="grid grid-cols-3 gap-2 text-sm">
               <label className="flex flex-col gap-1">
                 <span className="text-xs text-muted">Cant.</span>
-                <input
-                  inputMode="decimal"
-                  value={String(line.quantity).replace(".", ",")}
-                  onChange={(e) =>
-                    updateLine(line.id, {
-                      quantity: Number(e.target.value.replace(",", ".")) || 0,
-                    })
-                  }
+                <DraftDecimalInput
+                  value={line.quantity}
+                  format={formatQuantity}
+                  parse={parseDecimal}
+                  onCommit={(quantity) => updateLine(line.id, { quantity })}
                   className="h-10 rounded-lg border border-line px-2"
                 />
               </label>
               <label className="flex flex-col gap-1">
                 <span className="text-xs text-muted">P. unit.</span>
-                <input
-                  inputMode="decimal"
-                  value={formatEuroInput(line.unitCents)}
-                  onChange={(e) =>
-                    updateLine(line.id, { unitCents: parseEuroInput(e.target.value) })
-                  }
+                <DraftDecimalInput
+                  value={line.unitCents}
+                  format={formatEuroInput}
+                  parse={parseEuroInput}
+                  onCommit={(unitCents) => updateLine(line.id, { unitCents })}
                   className="h-10 rounded-lg border border-line px-2"
                 />
               </label>
               <label className="flex flex-col gap-1">
                 <span className="text-xs text-muted">Importe</span>
-                <input
-                  inputMode="decimal"
-                  value={formatEuroInput(line.amountCents)}
-                  onChange={(e) =>
-                    updateLine(line.id, { amountCents: parseEuroInput(e.target.value) })
-                  }
+                <DraftDecimalInput
+                  value={line.amountCents}
+                  format={formatEuroInput}
+                  parse={parseEuroInput}
+                  onCommit={(amountCents) => updateLine(line.id, { amountCents })}
                   className="h-10 rounded-lg border border-line px-2"
                 />
               </label>
@@ -471,6 +474,42 @@ export function ScanFlow() {
   );
 }
 
+function DraftDecimalInput({
+  value,
+  format,
+  parse,
+  onCommit,
+  className,
+}: {
+  value: number;
+  format: (n: number) => string;
+  parse: (raw: string) => number;
+  onCommit: (n: number) => void;
+  className?: string;
+}) {
+  const [editing, setEditing] = useState<string | null>(null);
+
+  return (
+    <input
+      type="text"
+      inputMode="decimal"
+      autoComplete="off"
+      autoCorrect="off"
+      value={editing ?? format(value)}
+      onFocus={() => setEditing(format(value))}
+      onChange={(e) => setEditing(e.target.value)}
+      onBlur={() => {
+        onCommit(parse(editing ?? ""));
+        setEditing(null);
+      }}
+      onKeyDown={(e) => {
+        if (e.key === "Enter") (e.target as HTMLInputElement).blur();
+      }}
+      className={className}
+    />
+  );
+}
+
 function ModelToggle({
   value,
   onChange,
@@ -492,7 +531,7 @@ function ModelToggle({
           }`}
         >
           <span className="block text-sm font-medium">Rápido</span>
-          <span className="text-xs text-muted">Ticket nítido</span>
+          <span className="text-xs text-muted">gpt-4o-mini</span>
         </button>
         <button
           type="button"
@@ -504,7 +543,7 @@ function ModelToggle({
           }`}
         >
           <span className="block text-sm font-medium">Preciso</span>
-          <span className="text-xs text-muted">Arrugado o borroso</span>
+          <span className="text-xs text-muted">GPT-5.6 Sol</span>
         </button>
       </div>
     </div>
