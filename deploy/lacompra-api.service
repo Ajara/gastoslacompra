@@ -1,0 +1,17 @@
+[Unit]
+Description=La compra API
+After=network.target
+
+[Service]
+Type=simple
+User=lacompra
+Group=lacompra
+WorkingDirectory=/opt/lacompra
+EnvironmentFile=/opt/lacompra/.env
+ExecStart=/opt/lacompra/backend/bin/server
+Restart=on-failure
+RestartSec=3
+NoNewPrivileges=true
+
+[Install]
+WantedBy=multi-user.target

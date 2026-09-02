@@ -1,0 +1,20 @@
+[Unit]
+Description=La compra web
+After=network.target lacompra-api.service
+Wants=lacompra-api.service
+
+[Service]
+Type=simple
+User=lacompra
+Group=lacompra
+WorkingDirectory=/opt/lacompra
+EnvironmentFile=/opt/lacompra/.env
+Environment=NODE_ENV=production
+Environment=HOSTNAME=127.0.0.1
+ExecStart=/usr/bin/node node_modules/next/dist/bin/next start -H 127.0.0.1 -p 3001
+Restart=on-failure
+RestartSec=3
+NoNewPrivileges=true
+
+[Install]
+WantedBy=multi-user.target

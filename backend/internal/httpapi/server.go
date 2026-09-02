@@ -30,12 +30,13 @@ type Config struct {
 	PhotosDir    string
 	OpenAIKey    string
 	AnthropicKey string
+	CookieSecure bool
 }
 
 type Server struct {
 	http.Server
-	db     *db.DB
-	cfg    Config
+	db  *db.DB
+	cfg Config
 }
 
 type ctxUser struct {
@@ -164,14 +165,7 @@ func (s *Server) logout(w http.ResponseWriter, r *http.Request) {
 	if c, err := r.Cookie(cookieName); err == nil {
 		_, _ = s.db.SQL.Exec(`DELETE FROM sessions WHERE token_hash = ?`, db.HashToken(c.Value))
 	}
-	http.SetCookie(w, &http.Cookie{
-		Name:     cookieName,
-		Value:    "",
-		Path:     "/",
-		MaxAge:   -1,
-		HttpOnly: true,
-		SameSite: http.SameSiteLaxMode,
-	})
+	http.SetCookie(w, s.sessionCookie("", -1, time.Time{}))
 	writeJSON(w, http.StatusOK, map[string]bool{"ok": true})
 }
 
@@ -642,8 +636,8 @@ func (s *Server) getProduct(w http.ResponseWriter, r *http.Request, _ ctxUser, h
 		})
 	}
 	writeJSON(w, http.StatusOK, map[string]any{
-		"product": map[string]string{"id": id, "canonical_name": name, "category": cat},
-		"history": history,
+		"product":   map[string]string{"id": id, "canonical_name": name, "category": cat},
+		"history":   history,
 		"household": h,
 	})
 }
@@ -847,16 +841,24 @@ func (s *Server) issueSession(w http.ResponseWriter, userID string) error {
 		db.HashToken(token), userID, exp.Format(time.RFC3339Nano)); err != nil {
 		return err
 	}
-	http.SetCookie(w, &http.Cookie{
+	http.SetCookie(w, s.sessionCookie(token, sessionDays*24*60*60, exp))
+	return nil
+}
+
+func (s *Server) sessionCookie(value string, maxAge int, exp time.Time) *http.Cookie {
+	c := &http.Cookie{
 		Name:     cookieName,
-		Value:    token,
+		Value:    value,
 		Path:     "/",
-		Expires:  exp,
-		MaxAge:   sessionDays * 24 * 60 * 60,
+		MaxAge:   maxAge,
 		HttpOnly: true,
 		SameSite: http.SameSiteLaxMode,
-	})
-	return nil
+		Secure:   s.cfg.CookieSecure,
+	}
+	if !exp.IsZero() {
+		c.Expires = exp
+	}
+	return c
 }
 
 func randomInvite() string {

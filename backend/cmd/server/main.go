@@ -31,6 +31,7 @@ func main() {
 		PhotosDir:    photosDir,
 		OpenAIKey:    os.Getenv("OPENAI_API_KEY"),
 		AnthropicKey: os.Getenv("ANTHROPIC_API_KEY"),
+		CookieSecure: envTruthy("COOKIE_SECURE"),
 	})
 
 	log.Printf("API escuchando en %s (sqlite %s)", srv.Addr, filepath.Join(dataDir, "lacompra.db"))
@@ -44,4 +45,13 @@ func getenv(key, fallback string) string {
 		return v
 	}
 	return fallback
+}
+
+func envTruthy(key string) bool {
+	switch os.Getenv(key) {
+	case "1", "true", "TRUE", "yes", "YES":
+		return true
+	default:
+		return false
+	}
 }
