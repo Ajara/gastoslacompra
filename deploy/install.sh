@@ -80,6 +80,13 @@ cp "${PREFIX}/deploy/lacompra-api.service" /etc/systemd/system/lacompra-api.serv
 
 chown -R lacompra:lacompra "${PREFIX}"
 
+if command -v restorecon >/dev/null 2>&1; then
+  echo "Restaurando contexto SELinux…"
+  restorecon -Rv "${PREFIX}" \
+    /etc/systemd/system/lacompra-api.service \
+    /etc/systemd/system/lacompra-web.service
+fi
+
 systemctl daemon-reload
 systemctl enable --now lacompra-api.service lacompra-web.service
 systemctl restart lacompra-api.service lacompra-web.service
