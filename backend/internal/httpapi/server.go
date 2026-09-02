@@ -347,7 +347,7 @@ func (s *Server) extractTicket(w http.ResponseWriter, r *http.Request, _ ctxUser
 		return
 	}
 	mime := header.Header.Get("Content-Type")
-	ticket, err := extract.Receipt(raw, mime, s.cfg.OpenAIKey, s.cfg.AnthropicKey)
+	ticket, err := extract.Receipt(raw, mime, s.cfg.OpenAIKey, s.cfg.AnthropicKey, r.FormValue("model"))
 	if err != nil {
 		writeError(w, http.StatusBadRequest, err.Error())
 		return

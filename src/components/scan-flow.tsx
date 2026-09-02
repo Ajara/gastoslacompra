@@ -1,6 +1,6 @@
 "use client";
 
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { useRouter } from "next/navigation";
 import {
   formatCents,
@@ -12,6 +12,17 @@ import {
 import { fromDatetimeLocalValue, toDatetimeLocalValue } from "@/lib/dates";
 import type { DraftLine, ExtractedTicket, TicketDraft } from "@/lib/types";
 import { eurosToCents } from "@/lib/money";
+
+const EXTRACT_MODEL_KEY = "lacompra_extract_model";
+
+type ExtractModel = "fast" | "accurate";
+
+function loadExtractModel(): ExtractModel {
+  if (typeof window === "undefined") return "fast";
+  return window.localStorage.getItem(EXTRACT_MODEL_KEY) === "accurate"
+    ? "accurate"
+    : "fast";
+}
 
 function newLine(): DraftLine {
   return {
@@ -44,9 +55,9 @@ function toDraft(extracted: ExtractedTicket): TicketDraft {
   };
 }
 
-async function compressImage(file: File): Promise<Blob> {
+async function compressImage(file: File, mode: ExtractModel = "fast"): Promise<Blob> {
   const bitmap = await createImageBitmap(file);
-  const max = 1600;
+  const max = mode === "accurate" ? 2400 : 1600;
   const scale = Math.min(1, max / Math.max(bitmap.width, bitmap.height));
   const canvas = document.createElement("canvas");
   canvas.width = Math.max(1, Math.round(bitmap.width * scale));
@@ -58,7 +69,7 @@ async function compressImage(file: File): Promise<Blob> {
     canvas.toBlob(
       (blob) => resolve(blob || file),
       "image/jpeg",
-      0.82,
+      mode === "accurate" ? 0.92 : 0.82,
     );
   });
 }
@@ -68,10 +79,21 @@ export function ScanFlow() {
   const [step, setStep] = useState<"idle" | "reading" | "review">("idle");
   const [error, setError] = useState<string | null>(null);
   const [photo, setPhoto] = useState<Blob | null>(null);
+  const [originalFile, setOriginalFile] = useState<File | null>(null);
   const [preview, setPreview] = useState<string | null>(null);
   const [draft, setDraft] = useState<TicketDraft | null>(null);
   const [saving, setSaving] = useState(false);
   const [confirmMismatch, setConfirmMismatch] = useState(false);
+  const [model, setModel] = useState<ExtractModel>("fast");
+
+  useEffect(() => {
+    setModel(loadExtractModel());
+  }, []);
+
+  function chooseModel(next: ExtractModel) {
+    setModel(next);
+    window.localStorage.setItem(EXTRACT_MODEL_KEY, next);
+  }
 
   const sum = useMemo(
     () => (draft ? linesSumCents(draft.lines) : 0),
@@ -79,18 +101,18 @@ export function ScanFlow() {
   );
   const mismatch = draft ? isMismatch(draft.totalCents, sum) : false;
 
-  async function onFile(file: File | undefined) {
-    if (!file) return;
+  async function extractFrom(
+    blob: Blob,
+    fallback: "idle" | "review",
+    used: ExtractModel = model,
+  ) {
     setError(null);
     setConfirmMismatch(false);
     setStep("reading");
     try {
-      const compressed = await compressImage(file);
-      setPhoto(compressed);
-      setPreview(URL.createObjectURL(compressed));
-
       const body = new FormData();
-      body.append("file", compressed, "ticket.jpg");
+      body.append("file", blob, "ticket.jpg");
+      body.append("model", used);
       const response = await fetch("/backend/extract", {
         method: "POST",
         body,
@@ -103,9 +125,32 @@ export function ScanFlow() {
       setDraft(toDraft(payload));
       setStep("review");
     } catch (err) {
+      setStep(fallback);
+      setError(err instanceof Error ? err.message : "No se pudo leer el ticket");
+    }
+  }
+
+  async function onFile(file: File | undefined) {
+    if (!file) return;
+    try {
+      setOriginalFile(file);
+      const compressed = await compressImage(file, model);
+      setPhoto(compressed);
+      setPreview(URL.createObjectURL(compressed));
+      await extractFrom(compressed, "idle", model);
+    } catch (err) {
       setStep("idle");
       setError(err instanceof Error ? err.message : "No se pudo leer el ticket");
     }
+  }
+
+  async function reread() {
+    const source = originalFile;
+    if (!source && !photo) return;
+    const blob = source ? await compressImage(source, model) : photo!;
+    setPhoto(blob);
+    setPreview(URL.createObjectURL(blob));
+    await extractFrom(blob, "review", model);
   }
 
   function updateLine(id: string, patch: Partial<DraftLine>) {
@@ -188,6 +233,7 @@ export function ScanFlow() {
             Foto al salir de la tienda. Revisa las líneas antes de guardar.
           </p>
         </div>
+        <ModelToggle value={model} onChange={chooseModel} />
         <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
           <label className="flex min-h-36 cursor-pointer flex-col items-center justify-center gap-2 rounded-2xl border border-dashed border-ink/20 bg-card px-6 text-center">
             <span className="text-sm font-medium text-scan">Hacer foto</span>
@@ -226,7 +272,11 @@ export function ScanFlow() {
     return (
       <div className="flex flex-1 flex-col items-center justify-center gap-3 py-20">
         <p className="text-lg font-medium">Leyendo el ticket…</p>
-        <p className="text-sm text-muted">Suele tardar unos segundos.</p>
+        <p className="text-sm text-muted">
+          {model === "accurate"
+            ? "Modelo preciso: tarda un poco más."
+            : "Suele tardar unos segundos."}
+        </p>
       </div>
     );
   }
@@ -249,6 +299,22 @@ export function ScanFlow() {
           alt="Ticket"
           className="max-h-40 w-full rounded-xl object-cover object-top"
         />
+      ) : null}
+
+      {photo ? (
+        <div className="rounded-2xl border border-line bg-card p-3">
+          <ModelToggle value={model} onChange={chooseModel} />
+          <button
+            type="button"
+            className="mt-3 h-10 w-full rounded-xl border border-line text-sm font-medium"
+            onClick={() => void reread()}
+          >
+            Volver a leer
+          </button>
+          <p className="mt-2 text-xs text-muted">
+            Si salió mal por el papel arrugado, prueba Preciso y relee.
+          </p>
+        </div>
       ) : null}
 
       <label className="flex flex-col gap-1 text-sm">
@@ -383,6 +449,7 @@ export function ScanFlow() {
             setStep("idle");
             setDraft(null);
             setPhoto(null);
+            setOriginalFile(null);
           }}
         >
           Otra foto
@@ -398,6 +465,46 @@ export function ScanFlow() {
             : confirmMismatch && mismatch
               ? "Guardar aunque no cuadre"
               : `Guardar ${formatCents(draft.totalCents)}`}
+        </button>
+      </div>
+    </div>
+  );
+}
+
+function ModelToggle({
+  value,
+  onChange,
+}: {
+  value: ExtractModel;
+  onChange: (next: ExtractModel) => void;
+}) {
+  return (
+    <div>
+      <p className="mb-2 text-sm text-muted">Lectura</p>
+      <div className="grid grid-cols-2 gap-2">
+        <button
+          type="button"
+          onClick={() => onChange("fast")}
+          className={`rounded-xl border px-3 py-2 text-left ${
+            value === "fast"
+              ? "border-accent bg-card"
+              : "border-line bg-card/60"
+          }`}
+        >
+          <span className="block text-sm font-medium">Rápido</span>
+          <span className="text-xs text-muted">Ticket nítido</span>
+        </button>
+        <button
+          type="button"
+          onClick={() => onChange("accurate")}
+          className={`rounded-xl border px-3 py-2 text-left ${
+            value === "accurate"
+              ? "border-accent bg-card"
+              : "border-line bg-card/60"
+          }`}
+        >
+          <span className="block text-sm font-medium">Preciso</span>
+          <span className="text-xs text-muted">Arrugado o borroso</span>
         </button>
       </div>
     </div>

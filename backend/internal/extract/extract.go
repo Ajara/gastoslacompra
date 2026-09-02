@@ -51,21 +51,45 @@ type Line struct {
 }
 
 type Ticket struct {
-	Store          string  `json:"store"`
-	PurchasedAt    string  `json:"purchasedAt"`
-	Total          float64 `json:"total"`
-	PaymentMethod  *string `json:"paymentMethod"`
-	InvoiceNumber  *string `json:"invoiceNumber"`
-	Lines          []Line  `json:"lines"`
+	Store         string  `json:"store"`
+	PurchasedAt   string  `json:"purchasedAt"`
+	Total         float64 `json:"total"`
+	PaymentMethod *string `json:"paymentMethod"`
+	InvoiceNumber *string `json:"invoiceNumber"`
+	Lines         []Line  `json:"lines"`
 }
 
-func Receipt(image []byte, mime, openaiKey, anthropicKey string) (*Ticket, error) {
+type Model struct {
+	ID     string
+	Detail string
+	Hint   string
+}
+
+func ResolveModel(name string) Model {
+	switch strings.ToLower(strings.TrimSpace(name)) {
+	case "accurate", "preciso", "gpt-4o":
+		return Model{
+			ID:     "gpt-4o",
+			Detail: "high",
+			Hint:   "El ticket puede estar arrugado, borroso o a contraluz. Lee cada línea con cuidado. No inventes productos.",
+		}
+	default:
+		return Model{
+			ID:     "gpt-4o-mini",
+			Detail: "auto",
+			Hint:   "Extrae todas las líneas de este ticket.",
+		}
+	}
+}
+
+func Receipt(image []byte, mime, openaiKey, anthropicKey, modelName string) (*Ticket, error) {
 	if mime == "" {
 		mime = "image/jpeg"
 	}
 	b64 := base64.StdEncoding.EncodeToString(image)
+	model := ResolveModel(modelName)
 	if openaiKey != "" {
-		return withOpenAI(b64, mime, openaiKey)
+		return withOpenAI(b64, mime, openaiKey, model)
 	}
 	if anthropicKey != "" {
 		return withAnthropic(b64, mime, anthropicKey)
@@ -73,9 +97,9 @@ func Receipt(image []byte, mime, openaiKey, anthropicKey string) (*Ticket, error
 	return nil, fmt.Errorf("falta OPENAI_API_KEY o ANTHROPIC_API_KEY para leer el ticket")
 }
 
-func withOpenAI(b64, mime, apiKey string) (*Ticket, error) {
+func withOpenAI(b64, mime, apiKey string, model Model) (*Ticket, error) {
 	payload := map[string]any{
-		"model":           "gpt-4o-mini",
+		"model":           model.ID,
 		"temperature":     0,
 		"response_format": map[string]string{"type": "json_object"},
 		"messages": []any{
@@ -83,10 +107,13 @@ func withOpenAI(b64, mime, apiKey string) (*Ticket, error) {
 			map[string]any{
 				"role": "user",
 				"content": []any{
-					map[string]string{"type": "text", "text": "Extrae todas las líneas de este ticket."},
+					map[string]string{"type": "text", "text": model.Hint},
 					map[string]any{
-						"type":      "image_url",
-						"image_url": map[string]string{"url": "data:" + mime + ";base64," + b64},
+						"type": "image_url",
+						"image_url": map[string]string{
+							"url":    "data:" + mime + ";base64," + b64,
+							"detail": model.Detail,
+						},
 					},
 				},
 			},
@@ -130,10 +157,10 @@ func withAnthropic(b64, mime, apiKey string) (*Ticket, error) {
 		mime = "image/jpeg"
 	}
 	payload := map[string]any{
-		"model":      "claude-sonnet-4-20250514",
-		"max_tokens": 8000,
+		"model":       "claude-sonnet-4-20250514",
+		"max_tokens":  8000,
 		"temperature": 0,
-		"system":     systemPrompt,
+		"system":      systemPrompt,
 		"messages": []any{
 			map[string]any{
 				"role": "user",
